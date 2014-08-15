@@ -8,12 +8,13 @@
 ;   You must not remove this notice, or any other, from this software.
 
 (ns clojure.test.check.generators
-  (:import java.util.Random)
   (:refer-clojure :exclude [int vector list hash-map map keyword
                             char boolean byte bytes sequence
                             not-empty symbol namespace])
   (:require [clojure.core :as core]
-            [clojure.test.check.rose-tree :as rose]))
+            [clojure.test.check.rose-tree :as rose]
+            [clojure.test.check.random :as rnd])
+  (:import clojure.test.check.random.RandomGenerator))
 
 ;; Generic helpers
 ;; ---------------------------------------------------------------------------
@@ -52,31 +53,32 @@
 
 (defn call-gen
   {:no-doc true}
-  [{generator-fn :gen} rnd size]
-  (generator-fn rnd size))
+  [{generator-fn :gen} rndgen size]
+  (generator-fn rndgen size))
 
 (defn gen-pure
   {:no-doc true}
   [value]
   (make-gen
-    (fn [rnd size]
+    (fn [rndgen size]
       value)))
 
 (defn gen-fmap
   {:no-doc true}
   [k {h :gen}]
   (make-gen
-    (fn [rnd size]
-      (k (h rnd size)))))
+    (fn [rndgen size]
+      (k (h rndgen size)))))
 
 (defn gen-bind
   {:no-doc true}
   [{h :gen} k]
   (make-gen
-    (fn [rnd size]
-      (let [inner (h rnd size)
+    (fn [rndgen size]
+      (let [[rndgen1 rndgen2] (rnd/random-generator-split rndgen)
+            inner (h rndgen1 size)
             {result :gen} (k inner)]
-        (result rnd size)))))
+        (result rndgen2 size)))))
 
 ;; Exported generator functions
 ;; ---------------------------------------------------------------------------
@@ -98,8 +100,8 @@
   (fn [rose]
     (gen-fmap rose/join
               (make-gen
-                (fn [rnd size]
-                  (rose/fmap #(call-gen % rnd size)
+                (fn [rndgen size]
+                  (rose/fmap #(call-gen % rndgen size)
                              (rose/fmap k rose)))))))
 
 (defn bind
@@ -122,11 +124,6 @@
 ;; Helpers
 ;; ---------------------------------------------------------------------------
 
-(defn random
-  {:no-doc true}
-  ([] (Random.))
-  ([seed] (Random. seed)))
-
 (defn make-size-range-seq
   {:no-doc true}
   [max-size]
@@ -136,9 +133,12 @@
   "Return a sequence of realized values from `generator`."
   ([generator] (sample-seq generator 100))
   ([generator max-size]
-   (let [r (random)
-         size-seq (make-size-range-seq max-size)]
-     (core/map (comp rose/root (partial call-gen generator r)) size-seq))))
+     (letfn [(rec [rndgen size-seq]
+               (lazy-seq
+                (let [[rndgen1 rndgen2] (rnd/random-generator-split rndgen)
+                      val (rose/root (call-gen generator rndgen1 (first size-seq)))]
+                  (cons val (rec rndgen2 (rest size-seq))))))]
+       (rec (rnd/make-random-generator 0) (make-size-range-seq max-size)))))
 
 (defn sample
   "Return a sequence of `num-samples` (default 10)
@@ -165,11 +165,10 @@
   [value (core/map int-rose-tree (shrink-int value))])
 
 (defn- rand-range
-  [^Random rnd lower upper]
+  [^RandomGenerator rndgen lower upper]
   {:pre [(<= lower upper)]}
-  (let [factor (.nextDouble rnd)]
-    (long (Math/floor (+ lower (- (* factor (+ 1.0 upper))
-                                  (* factor lower)))))))
+  (let [[n _] (rnd/random-long rndgen lower upper)]
+    n))
 
 (defn sized
   "Create a generator that depends on the size parameter.
@@ -177,9 +176,9 @@
   a generator."
   [sized-gen]
   (make-gen
-    (fn [rnd size]
+    (fn [rndgen size]
       (let [sized-gen (sized-gen size)]
-        (call-gen sized-gen rnd size)))))
+        (call-gen sized-gen rndgen size)))))
 
 ;; Combinators and helpers
 ;; ---------------------------------------------------------------------------
@@ -188,16 +187,16 @@
   "Create a new generator with `size` always bound to `n`."
   [n {gen :gen}]
   (make-gen
-    (fn [rnd _size]
-      (gen rnd n))))
+    (fn [rndgen _size]
+      (gen rndgen n))))
 
 (defn choose
   "Create a generator that returns numbers in the range
   `min-range` to `max-range`, inclusive."
   [lower upper]
   (make-gen
-    (fn [^Random rnd _size]
-      (let [value (rand-range rnd lower upper)]
+    (fn [^RandomGenerator rndgen _size]
+      (let [value (rand-range rndgen lower upper)]
         (rose/filter
           #(and (>= % lower) (<= % upper))
           [value (core/map int-rose-tree (shrink-int value))])))))
@@ -253,14 +252,15 @@
               #(gen-pure (rose/fmap v %)))))
 
 (defn- such-that-helper
-  [max-tries pred gen tries-left rand-seed size]
+  [max-tries pred gen tries-left rndgen size]
   (if (zero? tries-left)
     (throw (ex-info (str "Couldn't satisfy such-that predicate after "
                          max-tries " tries.") {}))
-    (let [value (call-gen gen rand-seed size)]
+    (let [[rndgen1 rndgen2] (rnd/random-generator-split rndgen)
+          value (call-gen gen rndgen2 size)]
       (if (pred (rose/root value))
         (rose/filter pred value)
-        (recur max-tries pred gen (dec tries-left) rand-seed (inc size))))))
+        (recur max-tries pred gen (dec tries-left) rndgen1 (inc size))))))
 
 (defn such-that
   "Create a generator that generates values from `gen` that satisfy predicate
@@ -280,8 +280,8 @@
    (such-that pred gen 10))
   ([pred gen max-tries]
    (make-gen
-     (fn [rand-seed size]
-       (such-that-helper max-tries pred gen max-tries rand-seed size)))))
+     (fn [rndgen size]
+       (such-that-helper max-tries pred gen max-tries rndgen size)))))
 
 (def not-empty
   "Modifies a generator so that it doesn't generate empty collections.

@@ -10,6 +10,7 @@
 (ns clojure.test.check.test
   (:use clojure.test)
   (:require [clojure.test.check       :as tc]
+            [clojure.test.check.random :as rnd]
             [clojure.test.check.generators :as gen]
             [clojure.test.check.properties :as prop]
             [clojure.test.check.rose-tree :as rose]
@@ -434,7 +435,7 @@
                  size gen/nat]
                 (let [tree (gen/call-gen
                              (gen/choose mini maxi)
-                             (gen/random random-seed)
+                             (rnd/make-random-generator random-seed)
                              size)]
                   (every?
                     #(and (<= mini %) (>= maxi %))
@@ -464,9 +465,9 @@
 ;; ---------------------------------------------------------------------------
 
 (deftest rand-range-uses-inclusive-bounds
-  (let [bounds [5 7]
-        rand-range (apply partial #'gen/rand-range (gen/random) bounds)]
+  (let [bounds [5 7]]
     (loop [trials 0
+           rands (gen/sample (apply gen/choose bounds))
            bounds (set bounds)]
       (cond
        (== trials 10000)
@@ -475,7 +476,7 @@
                     "but we should be able to rely upon probability to not bother us "
                     "too frequently."))
        (empty? bounds) (is true)
-       :else (recur (inc trials) (disj bounds (rand-range)))))))
+       :else (recur (inc trials) (rest rands) (disj bounds (first rands)))))))
 
 (deftest elements-generates-all-provided-values
   (let [options [:a 42 'c/d "foo"]]

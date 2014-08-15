@@ -8,7 +8,8 @@
 ;   You must not remove this notice, or any other, from this software.
 
 (ns clojure.test.check
-  (:require [clojure.test.check.generators :as gen]
+  (:require [clojure.test.check.random :as rnd]
+            [clojure.test.check.generators :as gen]
             [clojure.test.check.clojure-test :as ct]
             [clojure.test.check.rose-tree :as rose]))
 
@@ -17,9 +18,9 @@
 (defn make-rng
   [seed]
   (if seed
-    [seed (gen/random seed)]
+    [seed (rnd/make-random-generator seed)]
     (let [non-nil-seed (System/currentTimeMillis)]
-      [non-nil-seed (gen/random non-nil-seed)])))
+      [non-nil-seed (rnd/make-random-generator non-nil-seed)])))
 
 (defn- complete
   [property num-trials seed]
@@ -47,14 +48,14 @@
       (quick-check 100 p)
   "
   [num-tests property & {:keys [seed max-size] :or {max-size 200}}]
-  (let [[created-seed rng] (make-rng seed)
+  (let [[created-seed rndgen] (make-rng seed)
         size-seq (gen/make-size-range-seq max-size)]
     (loop [so-far 0
            size-seq size-seq]
       (if (== so-far num-tests)
         (complete property num-tests created-seed)
         (let [[size & rest-size-seq] size-seq
-              result-map-rose (gen/call-gen property rng size)
+              result-map-rose (gen/call-gen property rndgen size)
               result-map (rose/root result-map-rose)
               result (:result result-map)
               args (:args result-map)]
