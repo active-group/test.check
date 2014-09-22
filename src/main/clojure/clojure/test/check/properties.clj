@@ -10,13 +10,20 @@
 (ns clojure.test.check.properties
   (:require [clojure.test.check.generators :as gen]))
 
+(defrecord ^{:doc "Result from a test.check run."} 
+    CheckResult
+    [result function args])
+
+(defn check-result?
+  "Is object a result from a test.check run?"
+  [x]
+  (instance? CheckResult x))
+
 (defn- apply-gen
   [function]
   (fn [args]
     (let [result (try (apply function args) (catch Throwable t t))]
-      {:result result
-       :function function
-       :args args})))
+      (CheckResult. result function args))))
 
 (defn for-all*
   "Creates a property (properties are also generators). A property
