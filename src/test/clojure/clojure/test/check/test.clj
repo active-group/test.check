@@ -489,3 +489,16 @@
              "it is possible for this to fail without there being a problem, "
              "but we should be able to rely upon probability to not bother us "
              "too frequently."))))
+
+;; for-all allows nesting
+
+(deftest for-all-allows-nesting
+  (testing "for-all allows nesting"
+    (is
+     (not
+      (:result
+        (tc/quick-check
+         100
+         (prop/for-all [v1 gen/nat]
+           (prop/for-all [v2 (gen/choose 0 v1)]
+             (< v2 v1)))))))))

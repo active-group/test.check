@@ -19,12 +19,6 @@
   [x]
   (instance? CheckResult x))
 
-(defn- apply-gen
-  [function]
-  (fn [args]
-    (let [result (try (apply function args) (catch Throwable t t))]
-      (CheckResult. result function args))))
-
 (defn for-all*
   "Creates a property (properties are also generators). A property
   is a generator that generates the result of applying the function
@@ -36,9 +30,14 @@
   (for-all* [gen/int gen/int] (fn [a b] (>= (+ a b) a)))
   "
   [args function]
-  (gen/fmap
-    (apply-gen function)
-    (apply gen/tuple args)))
+  (gen/bind
+   (apply gen/tuple args)
+   (fn [args]
+     (let [result (try (apply function args) (catch Throwable t t))]
+       (cond
+        (check-result? result) (gen/return result)
+        (gen/generator? result) result
+        :else (gen/return (CheckResult. result function args)))))))
 
 (defn binding-vars
   [bindings]
